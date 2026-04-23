@@ -546,25 +546,47 @@ export default function EntityGenerator() {
   }, [handleCSVUpload]);
 
   // ─── Input handling ───────────────────────────────────────────────────────
+  // Parse location lines: "Name | Address | ReadableName" or just "Name"
+  const parseLocationLines = useCallback((raw: string): { name: string; address: string; readableName: string }[] => {
+    return raw.split(/[\n]+/).map(line => line.trim()).filter(l => l.length > 0).map(line => {
+      const parts = line.split("|").map(p => p.trim());
+      return {
+        name: parts[0] || "",
+        address: parts[1] || "",
+        readableName: parts[2] || "",
+      };
+    }).filter(loc => loc.name.length > 0);
+  }, []);
+
   const handleInputChange = useCallback((value: string) => {
     setInputText(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      const names = parseNames(value);
-      if (names.length > 0) enqueueNames(names, entityType);
+      if (entityType === "LOCATION") {
+        const locations = parseLocationLines(value);
+        if (locations.length > 0) enqueueLocations(locations);
+      } else {
+        const names = parseNames(value);
+        if (names.length > 0) enqueueNames(names, entityType);
+      }
     }, 600);
-  }, [entityType, enqueueNames]);
+  }, [entityType, enqueueNames, enqueueLocations, parseLocationLines]);
 
   const handleTypeChange = useCallback((type: EntityType) => {
     setEntityType(type);
     if (inputText.trim()) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        const names = parseNames(inputText);
-        if (names.length > 0) enqueueNames(names, type);
+        if (type === "LOCATION") {
+          const locations = parseLocationLines(inputText);
+          if (locations.length > 0) enqueueLocations(locations);
+        } else {
+          const names = parseNames(inputText);
+          if (names.length > 0) enqueueNames(names, type);
+        }
       }, 300);
     }
-  }, [inputText, enqueueNames]);
+  }, [inputText, enqueueNames, enqueueLocations, parseLocationLines]);
 
   // ─── Editing ──────────────────────────────────────────────────────────────
   const removeVariant = useCallback((entityId: string, variant: string) => {
@@ -617,7 +639,7 @@ export default function EntityGenerator() {
 
   const retryEntity = useCallback((entity: Entity) => {
     processingRef.current.delete(entity.name.toLowerCase());
-    setEntities(prev => prev.map(e => e.id === entity.id ? { ...e, status: "queued", error: undefined } : e));
+    setEntities(prev => prev.map(e => e.id === entity.id ? { ...e, status: "queued", error: undefined, variants: [] } : e));
     queueRef.current.push({
       name: entity.name,
       type: entity.type,
@@ -629,6 +651,24 @@ export default function EntityGenerator() {
     setQueueTotal(t => t + 1);
     setIsProcessing(true);
     processNextBatch();
+  }, [processNextBatch]);
+
+  // Regenerate a completed entity (clears existing variants and re-queues)
+  const regenerateEntity = useCallback((entity: Entity) => {
+    processingRef.current.delete(entity.name.toLowerCase());
+    setEntities(prev => prev.map(e => e.id === entity.id ? { ...e, status: "queued", error: undefined, variants: [], collisions: [] } : e));
+    queueRef.current.push({
+      name: entity.name,
+      type: entity.type,
+      id: entity.id,
+      address: entity.address,
+      readableName: entity.readableName,
+    });
+    processingRef.current.add(entity.name.toLowerCase());
+    setQueueTotal(t => t + 1);
+    setIsProcessing(true);
+    processNextBatch();
+    toast.info(`Regenerating variants for "${entity.name}"`);
   }, [processNextBatch]);
 
   useEffect(() => {
@@ -971,9 +1011,10 @@ export default function EntityGenerator() {
                             </div>
                           </div>
                           <div className="flex items-center gap-0.5 flex-shrink-0">
-                            {entity.status === "error" && (
-                              <button onClick={e => { e.stopPropagation(); retryEntity(entity); }}
+                            {(entity.status === "done" || entity.status === "error") && (
+                              <button onClick={e => { e.stopPropagation(); entity.status === "error" ? retryEntity(entity) : regenerateEntity(entity); }}
                                 className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg"
+                                title={entity.status === "error" ? "Retry" : "Regenerate"}
                                 style={{ color: S.blue }}>
                                 <RefreshCw size={10} />
                               </button>
@@ -1043,7 +1084,15 @@ export default function EntityGenerator() {
               </div>
 
               <button
-                onClick={() => { const names = parseNames(inputText); if (names.length > 0) enqueueNames(names, entityType); }}
+                onClick={() => {
+                  if (entityType === "LOCATION") {
+                    const locations = parseLocationLines(inputText);
+                    if (locations.length > 0) enqueueLocations(locations);
+                  } else {
+                    const names = parseNames(inputText);
+                    if (names.length > 0) enqueueNames(names, entityType);
+                  }
+                }}
                 disabled={!inputText.trim() || isProcessing}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
                 style={{
@@ -1137,9 +1186,20 @@ export default function EntityGenerator() {
                       </span>
                     )}
                   </div>
-                  <span className="text-[11px] flex items-center gap-1" style={{ color: S.red }}>
-                    Do NOT change the key name
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => selectedEntity && regenerateEntity(selectedEntity)}
+                      disabled={selectedEntity?.status === "generating" || selectedEntity?.status === "queued"}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-40"
+                      style={{ background: "oklch(0.45 0.22 250 / 0.06)", border: "1px solid oklch(0.45 0.22 250 / 0.18)", color: S.blue }}
+                      title="Regenerate variants for this entity"
+                    >
+                      <RefreshCw size={11} /> Regenerate
+                    </button>
+                    <span className="text-[11px] flex items-center gap-1" style={{ color: S.red }}>
+                      Do NOT change the key name
+                    </span>
+                  </div>
                 </div>
 
                 {/* Tags panel */}

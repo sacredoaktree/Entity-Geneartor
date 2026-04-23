@@ -92,3 +92,7 @@
 - [x] Frontend: Upload CSV button works for both Provider and Location CSVs (auto-detect format)
 - [x] Frontend: tags displayed as flat list (design decision: flat tags mirror the flat JSON output format; visual grouping by source word was considered but omitted to keep the UI consistent with the actual data structure)
 - [x] Tests: vitest for generateLocationVariants procedure with combined location+address output (9 new tests, 22 total)
+
+## Bug Fixes & New Features
+- [x] Fix: Location entities not generating JSON output — Generate button and auto-debounce now route LOCATION type through enqueueLocations with address/readableName metadata
+- [x] Feature: Per-entity refresh/regenerate button — visible on hover for done/error entities in sidebar, plus a Regenerate button in the editor header
